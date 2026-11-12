@@ -1,49 +1,58 @@
 # trimx
 
 A companion front-end for [trim-1](https://github.com/caveman-ai/trim-1)
-(Caveman's 1.2 MB context-trimming model) that fixes two context shapes
-where trim-1 silently does nothing — or breaks the output. trim-1's model
-is untouched; trimx sits in front of it and uses its public `Score` /
-`Compress` API and its own named operating points.
+(Caveman's 1.2 MB context-trimming model) that improves two context
+shapes where trim-1's line-level design gives little or no usable
+savings. trim-1's model is untouched; trimx sits in front of it and uses
+its public `Score` / `Compress` API and its own named operating points.
 
-## The gaps (reproduced against trim-1 v0.1.0, 2026-11-12)
+These are improvement opportunities, not defect claims: trim-1
+documents that it is line-level ("It keeps or drops whole lines") and
+that it returns input unchanged when a cut is too small to matter. trimx
+adds the two layers that design leaves out.
 
-**1. Paraphrased asks silently no-op on prose.** trim-1 scores lines
-against the query's own words. On a 20.8 KB policy document:
+## The gaps (reproduced against trim-1 v0.1.0, the current and only
+release, last upstream commit 2026-10-29; probed 2026-11-12)
+
+**1. Paraphrased asks return the input unchanged on prose.** trim-1
+scores lines against the query's own words. On a 20.8 KB policy
+document:
 
 ```
 $ trim --query "what is the refund policy" policy.md
 trim: kept 8 lines, removed 354, 20840 -> 568 bytes        # works
 $ trim --query "can I get my money back" policy.md
-trim: unchanged (cut below the minimum)                    # 0% cut, silently
+trim: unchanged (cut below the minimum)                    # 0% cut
 $ trim --query "how do returns work" policy.md
-trim: unchanged (cut below the minimum)                    # 0% cut, silently
+trim: unchanged (cut below the minimum)                    # 0% cut
 ```
 
-Agents paraphrase constantly, so the tool silently does nothing exactly
-when the ask is phrased the way people (and agents) actually phrase it.
-The stderr message ("cut below the minimum") also misattributes the cause:
-the file is identical; only the query wording changed. trim-1's model card
+Agents paraphrase constantly, so the savings disappear exactly when the
+ask is phrased the way people (and agents) actually phrase it. The
+fallback itself is safe (nothing is lost), but the stderr message ("cut
+below the minimum") reads as a file-size issue while the file is
+identical — only the query wording changed. trim-1's model card
 discloses multi-hop entity chains as a limit; single-hop synonymy like
 this is not in the list.
 
-**2. Pretty-printed JSON tool results are invisible to it.** A 395 KB
-JSON tool envelope (3,000 order records, one refunded) — the dominant
-shape of agent context:
+**2. Pretty-printed JSON tool results get no usable cut.** A 395 KB
+JSON tool envelope (3,000 order records, one refunded) — a common agent
+context shape:
 
 ```
 $ trim --query "which order was refunded and why" big.json
 trim: unchanged (cut below the minimum)        # 0% cut, answer inside
 $ trim --query "damaged" big.json | python3 -m json.tool
-json.decoder.JSONDecodeError                   # when it does cut, output is invalid JSON
+json.decoder.JSONDecodeError                   # line-level cut drops braces/keys
 ```
 
 Line-level scoring cannot isolate one record among thousands of
-identical-looking lines, and a line-level cut of pretty JSON rips out
-structural lines (braces, keys), producing output that no longer parses.
-(The model card discloses "saves little by design" for *short* tool
-outputs; this is large structured output, and invalid-JSON emission is
-not disclosed.)
+identical-looking lines, and a line-level cut of pretty JSON removes
+structural lines (braces, keys), so the output no longer parses as JSON.
+Both behaviors follow from trim-1's documented line-level design — its
+card discloses "saves little by design" for *short* tool outputs and
+"Line-level only" as a limit. trimx's contribution is a record-level
+path for the large structured outputs that design does not cover.
 
 ## What trimx does
 
@@ -122,8 +131,22 @@ signal, not a silent lie).
   irrelevant data is kept whole (still an exact trim-1 line-score
   decision, one level up).
 - The 4×-median record floor is calibrated on the fixtures in this repo
-  and the probes above, not on trim-1's benchmark suites.
+  and the probes above, not on trim-1's benchmark suites; no
+  generalization beyond these context shapes is claimed.
+- The 238-byte example output keeps the envelope keys and the matching
+  record plus an elision marker. Workflows that need neighboring records
+  for context should use a lower operating point or a lower floor; the
+  marker always says how many records were dropped.
+- All numbers are single-run measurements on this repo's fixtures on one
+  machine. They are not recall benchmarks and not provider-billing
+  measurements.
 - Elision markers add a `_trimx_elided` key/element; downstream schemas
   that forbid extra fields need to allow it.
 - trim-1's own limits (English, line-level scoring, entity chains) all
   still apply underneath.
+
+## Dependencies and license
+
+trimx imports trim-1 (Apache-2.0) as a Go module dependency; no trim-1
+source is copied into this repo. trimx's own license file is pending the
+author's decision — all rights reserved until then.
